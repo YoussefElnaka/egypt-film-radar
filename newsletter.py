@@ -88,7 +88,7 @@ def env_number(name, default, kind=float):
         return default
 
 
-VERSION = "1.3.2"
+VERSION = "1.3.3"
 PROJECT_URL = "https://github.com/YoussefElnaka/egyptian-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
@@ -623,6 +623,8 @@ def run_checks(state, yango_index, tmdb):
 
         # Keep the latest rating for the email's monitoring list
         item["rating"], item["votes"] = info["rating"], info["votes"]
+        if info.get("title") and item["title"].startswith("ElCinema #"):
+            item["title"] = info["title"]  # Placeholder from TEST_WATCHLIST, use the real name
         add_extras(info, item)
 
         # Source 1: ElCinema's own VOD Guide, already in info["platforms"]
