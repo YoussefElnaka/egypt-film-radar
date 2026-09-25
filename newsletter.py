@@ -88,7 +88,7 @@ def env_number(name, default, kind=float):
         return default
 
 
-VERSION = "1.2.2"
+VERSION = "1.2.3"
 PROJECT_URL = "https://github.com/YoussefElnaka/egyptian-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
@@ -805,7 +805,9 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
         subject = "Egyptian Film Radar: nothing new"
     if warnings:
         subject += " (check needed)"
-    if TEST_MODE:
+    # Buttondown already marks test sends with "[PREVIEW]", so only add our own
+    # "[TEST]" label when sending through a normal email account.
+    if TEST_MODE and DELIVERY != "buttondown":
         subject = "[TEST] " + subject
     return subject, body, bd_card
 
@@ -968,6 +970,22 @@ def main():
           f"delivery {DELIVERY}")
 
     state = load_state()
+
+    # Test and dry runs only: preview a full email without touching the real
+    # memory (nothing is saved in these modes anyway).
+    #   TEST_FRESH_START=1   pretend it's the very first run, so everything
+    #                        currently qualifying shows up as new
+    #   TEST_WATCHLIST=id,id add ElCinema movie IDs to the streaming watchlist,
+    #                        e.g. movies you know are streaming
+    if TEST_MODE or DRY_RUN:
+        if os.environ.get("TEST_FRESH_START") == "1":
+            state = {"candidates": {}, "watchlist": {}, "ignored": {}, "done": {}, "last_run": None}
+            print("Test: starting from a blank memory.")
+        for work_id in re.findall(r"\d+", os.environ.get("TEST_WATCHLIST", "")):
+            for bucket in ("candidates", "ignored", "done"):
+                state[bucket].pop(work_id, None)
+            state["watchlist"][work_id] = {"title": f"ElCinema #{work_id}", "added": today()}
+            print(f"Test: added ElCinema movie {work_id} to the streaming watchlist.")
 
     # The task runs every week; this makes the newsletter go out every RUN_EVERY_DAYS.
     # (-1 day of slack so a run that lands a few hours early still counts.)
