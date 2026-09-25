@@ -38,6 +38,7 @@ import time
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
 
 import requests
 from bs4 import BeautifulSoup
@@ -59,17 +60,35 @@ def load_env_file(path):
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            os.environ.setdefault(key.strip(), value.strip())
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]                 # KEY="value" -> value
+            else:
+                value = value.split(" #", 1)[0].strip()  # KEY=value  # comment -> value
+            os.environ.setdefault(key.strip(), value)
 
 
 load_env_file(os.path.join(SCRIPT_DIR, ".env"))
 
-VERSION = "1.0.0"
+def env_number(name, default, kind=float):
+    """Read a number setting. Empty or invalid values fall back to the default
+    (with a note in the log) instead of crashing."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return kind(raw)
+    except ValueError:
+        print(f"Note: {name}={raw!r} in .env isn't a valid number, using {default} instead.")
+        return default
+
+
+VERSION = "1.1.0"
 PROJECT_URL = "https://github.com/YoussefElnaka/egypt-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
-SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
+SMTP_HOST = os.environ.get("SMTP_HOST", "").strip() or "smtp.gmail.com"
+SMTP_PORT = env_number("SMTP_PORT", 587, int)
 SMTP_USER = os.environ.get("SMTP_USER", "").strip() or EMAIL_ADDRESS  # Usually the same as EMAIL_ADDRESS
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
@@ -77,12 +96,12 @@ TO_EMAIL = os.environ.get("TO_EMAIL")
 
 # These come from the .env file. The numbers here are only used if a line
 # is missing from .env.
-MIN_RATING = float(os.environ.get("MIN_RATING", 6.0))         # Rating needed to qualify
-MIN_VOTES = int(os.environ.get("MIN_VOTES", 20))              # Ignore ratings with fewer votes
-RECHECK_WEEKS = int(os.environ.get("RECHECK_WEEKS", 4))       # Keep re-checking ratings this long
-STREAMING_WATCH_MONTHS = int(os.environ.get("STREAMING_WATCH_MONTHS", 12))  # Give up on streaming after this
+MIN_RATING = env_number("MIN_RATING", 6.0)                          # Rating needed to qualify
+MIN_VOTES = env_number("MIN_VOTES", 20, int)                        # Ignore ratings with fewer votes
+RECHECK_WEEKS = env_number("RECHECK_WEEKS", 4, int)                 # Keep re-checking ratings this long
+STREAMING_WATCH_MONTHS = env_number("STREAMING_WATCH_MONTHS", 12, int)  # Give up on streaming after this
 
-RUN_EVERY_DAYS = int(os.environ.get("RUN_EVERY_DAYS", 14))  # Send at most this often (task runs weekly)
+RUN_EVERY_DAYS = env_number("RUN_EVERY_DAYS", 14, int)  # Send at most this often (task runs weekly)
 SHOW_ARABIC_TITLES = os.environ.get("SHOW_ARABIC_TITLES", "false").strip().lower() in ("true", "yes", "1", "on")
 
 RECHECK_DAYS = RECHECK_WEEKS * 7 + 2  # +2 days of slack so the last scheduled run still counts
@@ -150,17 +169,28 @@ def polite_pause():
     time.sleep(random.uniform(1.5, 3.0))
 
 
+def hide_secrets(text):
+    """Keep the TMDB key out of logs (error messages can include the full URL)."""
+    text = str(text)
+    return text.replace(TMDB_API_KEY, "***") if TMDB_API_KEY else text
+
+
 def fetch(url):
     """Download a page, retrying twice on failure. Returns HTML text."""
     last_error = None
     for attempt in range(3):
         try:
             res = requests.get(url, headers=HEADERS, timeout=30)
+            if res.status_code == 404:
+                raise RuntimeError("page not found (404)")  # Retrying won't help
             res.raise_for_status()
             return res.text
         except Exception as e:
             last_error = e
-            time.sleep(5 * (attempt + 1))
+            if "404" in str(e):
+                break
+            if attempt < 2:
+                time.sleep(5 * (attempt + 1))
     raise RuntimeError(f"Could not load {url}: {last_error}")
 
 
@@ -215,14 +245,20 @@ def get_movie_details(work_id):
     h1_text = h1.get_text(" ", strip=True) if h1 else ""
     year_match = re.search(r"\((\d{4})\)", h1_text)
     info["year"] = int(year_match.group(1)) if year_match else None
-    info["title"] = h1_text.split("(")[0].strip() if h1_text else None
+    # Title is everything before "(year)", so "El Set Lamma (Veto) (2026)" keeps "(Veto)"
+    if year_match:
+        info["title"] = h1_text[:year_match.start()].strip() or None
+    else:
+        info["title"] = h1_text.split("(")[0].strip() or None
 
     # Rating and vote count. The rating link's tooltip reads
     # "التقييم : 7.1 - عدد 80 صوت" (Rating: 7.1 - 80 votes)
     info["rating"], info["votes"] = 0.0, 0
     stats = soup.find("a", href=f"/en/work/{work_id}/stats")
     if stats and stats.get("title"):
-        numbers = re.findall(r"\d+(?:\.\d+)?", stats["title"])
+        # Remove thousands separators first, so "1,234 votes" isn't read as 1
+        text = re.sub(r"(?<=\d)[,\u066C](?=\d{3})", "", stats["title"])
+        numbers = re.findall(r"\d+(?:\.\d+)?", text)
         if len(numbers) >= 2:
             info["rating"], info["votes"] = float(numbers[0]), int(numbers[1])
 
@@ -232,6 +268,7 @@ def get_movie_details(work_id):
         for a in soup.find_all("a", href=re.compile(r"/en/index/work/country/[a-z]{2}/?$"))
     }
     info["egyptian"] = "eg" in countries
+    info["has_countries"] = bool(countries)  # New ElCinema pages are sometimes incomplete
 
     # Genres, e.g. ["Action", "Thriller"]. Only the first two, to keep the email tidy.
     genres = []
@@ -511,7 +548,10 @@ def run_checks(state, yango_index, tmdb):
         except Exception as e:
             print(f"  Couldn't check {title}: {e}")
             continue
-        if not info["egyptian"]:
+        if not info["has_countries"]:
+            # Page doesn't say where it's from yet. Don't rule it out; look again next run.
+            print(f"  {title}: ElCinema doesn't list its country yet, will check again next run")
+        elif not info["egyptian"]:
             state["ignored"][work_id] = {"title": title, "reason": "not Egyptian"}
             print(f"  {title}: not Egyptian, skipping")
         elif not is_recent(info):
@@ -553,6 +593,11 @@ def run_checks(state, yango_index, tmdb):
 
     print("Checking the streaming watchlist...")
     for work_id, item in list(state["watchlist"].items()):
+        if days_since(item["added"]) > STREAMING_WATCH_DAYS:
+            del state["watchlist"][work_id]
+            state["done"][work_id] = {"title": item["title"], "reason": "no streaming found in time"}
+            print(f"  {item['title']}: no streaming found within {STREAMING_WATCH_MONTHS} months, giving up")
+            continue
         polite_pause()
         try:
             info = get_movie_details(work_id)
@@ -590,7 +635,7 @@ def run_checks(state, yango_index, tmdb):
             elif not tmdb.problem:
                 tmdb_result = "movie not on TMDB yet"
         except Exception as e:
-            tmdb_result = f"error ({e})"
+            tmdb_result = f"error ({hide_secrets(e)})"
 
         print(f"  {item['title']}: ElCinema {elcinema_result} | Yango Play {yango_result} | TMDB {tmdb_result}")
         if info["platforms"]:
@@ -598,10 +643,6 @@ def run_checks(state, yango_index, tmdb):
             streaming_hits.append(info)
             del state["watchlist"][work_id]
             state["done"][work_id] = {"title": item["title"], "streaming_found": today()}
-        elif days_since(item["added"]) > STREAMING_WATCH_DAYS:
-            del state["watchlist"][work_id]
-            state["done"][work_id] = {"title": item["title"], "reason": "no streaming after a year"}
-            print("    -> nothing after a year, giving up on it")
         else:
             print("    -> not streaming yet")
 
@@ -653,9 +694,11 @@ def rating_html(m):
     date = f'<p {small}>Released {html.escape(m["release_date"])}</p>' if m.get("release_date") else ""
     if m.get("genres"):
         date += f'<p {small}>{html.escape(" · ".join(m["genres"]))}</p>'
+    if not m.get("votes"):
+        return f'<p style="margin:8px 0 0 0;font-size:15px;color:#7f8c8d;">Not rated yet</p>{date}'
     return (f'<p style="margin:8px 0 0 0;font-size:15px;">'
             f'<span style="font-size:18px;font-weight:bold;color:#e67e22;">{m["rating"]} / 10</span>'
-            f' <span style="color:#7f8c8d;font-size:13px;">from {m["votes"]} ratings</span></p>{date}')
+            f' <span style="color:#7f8c8d;font-size:13px;">from {m["votes"]:,} ratings</span></p>{date}')
 
 
 def monitoring_html(watchlist):
@@ -744,11 +787,35 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
     return subject, body
 
 
-def send_email(subject, body):
-    msg = MIMEMultipart()
+def build_text(theater_hits, streaming_hits, watchlist):
+    """Plain-text version of the email, for mail apps that don't show HTML.
+    Spam filters also trust emails more when they include one."""
+    def line(m):
+        rating = f"{m['rating']}/10 ({m['votes']:,} ratings)" if m.get("votes") else "not rated yet"
+        date = f", released {m['release_date']}" if m.get("release_date") else ""
+        return f"- {m['title']}: {rating}{date}\n  {m['link']}"
+    parts = ["EGYPT FILM RADAR", "",
+             "PERFORMING WELL IN THEATERS"]
+    parts += [line(m) for m in sorted(theater_hits, key=lambda m: m["rating"], reverse=True)] or ["Nothing new this time."]
+    parts += ["", "NOW STREAMING"]
+    for m in sorted(streaming_hits, key=lambda m: m["rating"], reverse=True):
+        parts.append(line(m))
+        parts += [f"  {name}: {p['url']}" for name, p in m["platforms"].items()]
+    if not streaming_hits:
+        parts.append("Nothing new this time.")
+    parts += ["", f"Monitoring {len(watchlist)} movie(s) for a streaming release.", "",
+              f"Sent by Egypt Film Radar: {PROJECT_URL}"]
+    return "\n".join(parts)
+
+
+def send_email(subject, body, text):
+    msg = MIMEMultipart("alternative")
     msg["From"] = EMAIL_ADDRESS
     msg["To"] = TO_EMAIL
     msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=(EMAIL_ADDRESS or "localhost").split("@")[-1])
+    msg.attach(MIMEText(text, "plain", "utf-8"))  # Plain version first, HTML last (the preferred one)
     msg.attach(MIMEText(body, "html", "utf-8"))
     # Port 465 uses SSL from the start; other ports (usually 587) upgrade with STARTTLS.
     if SMTP_PORT == 465:
@@ -790,6 +857,11 @@ def main():
     tmdb = TMDB(TMDB_API_KEY)
     theater_hits, streaming_hits, warnings = run_checks(state, yango_index, tmdb)
     subject, body = build_email(theater_hits, streaming_hits, warnings, state["watchlist"])
+    text = build_text(theater_hits, streaming_hits, state["watchlist"])
+    size_kb = len(body.encode("utf-8")) / 1024
+    if size_kb > 95:
+        print(f"Note: the email is {size_kb:.0f} KB. Gmail hides the end of emails over ~100 KB behind "
+              "a 'View entire message' link.")
 
     if DRY_RUN:
         os.makedirs(DATA_DIR, exist_ok=True)
@@ -800,11 +872,11 @@ def main():
         return
 
     try:
-        send_email(subject, body)
+        send_email(subject, body, text)
         print(f"Email sent: {subject}")
     except Exception as e:
         # Don't save, so nothing is marked as reported and next run tries again.
-        print(f"ERROR: email failed to send: {e}")
+        print(f"ERROR: email failed to send: {hide_secrets(e)}")
         sys.exit(1)
 
     if TEST_MODE:
