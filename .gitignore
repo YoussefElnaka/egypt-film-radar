@@ -1,0 +1,9 @@
+# Your personal settings (email password, API key). Never commit this.
+.env
+
+# What the script remembers between runs, and its caches
+data/
+
+# Python leftovers
+__pycache__/
+*.pyc
