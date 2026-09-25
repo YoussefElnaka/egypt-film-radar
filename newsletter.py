@@ -21,12 +21,17 @@ Sends an email every two weeks (by default) with two sections:
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 Streaming availability data from TMDB is provided by JustWatch.
 
+Delivery: by default the email goes out through your own email account
+(SMTP). With DELIVERY=buttondown, each issue is published to the
+subscribers of a Buttondown newsletter instead.
+
 Settings live in the .env file. Everything the script remembers lives in
 /app/data/state.json.
 The Yango title index is a cache kept in /app/data/yango_index.json.
 """
 
 import difflib
+import hashlib
 import html
 import json
 import os
@@ -83,7 +88,7 @@ def env_number(name, default, kind=float):
         return default
 
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 PROJECT_URL = "https://github.com/YoussefElnaka/egyptian-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
@@ -91,6 +96,14 @@ SMTP_HOST = os.environ.get("SMTP_HOST", "").strip() or "smtp.gmail.com"
 SMTP_PORT = env_number("SMTP_PORT", 587, int)
 SMTP_USER = os.environ.get("SMTP_USER", "").strip() or EMAIL_ADDRESS  # Usually the same as EMAIL_ADDRESS
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "").strip()
+
+# How the email goes out: "smtp" (your own email account, the default) or
+# "buttondown" (published to your Buttondown newsletter's subscribers).
+DELIVERY = os.environ.get("DELIVERY", "").strip().lower() or "smtp"
+BUTTONDOWN_API_KEY = os.environ.get("BUTTONDOWN_API_KEY", "").strip()
+# Buttondown mode only: where test emails, problem alerts and "nothing new"
+# notes go. Subscribers only ever get real issues.
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").strip()
 EMAIL_PASSWORD = os.environ.get("EMAIL_PASSWORD")
 TO_EMAIL = os.environ.get("TO_EMAIL")
 
@@ -170,9 +183,12 @@ def polite_pause():
 
 
 def hide_secrets(text):
-    """Keep the TMDB key out of logs (error messages can include the full URL)."""
+    """Keep API keys out of logs (error messages can include full URLs or headers)."""
     text = str(text)
-    return text.replace(TMDB_API_KEY, "***") if TMDB_API_KEY else text
+    for secret in (TMDB_API_KEY, BUTTONDOWN_API_KEY):
+        if secret:
+            text = text.replace(secret, "***")
+    return text
 
 
 def fetch(url):
@@ -750,8 +766,7 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
         for w in warnings
     )
 
-    body = f"""
-    <html><head><meta charset="utf-8"></head><body style="font-family:Arial,sans-serif;color:#333;background:#f4f4f4;padding:20px;">
+    card = f"""
       <div style="max-width:600px;margin:0 auto;background:#fff;padding:20px;border-radius:10px;">
         <h1 style="text-align:center;color:#2c3e50;font-size:22px;margin:0 0 5px 0;">Egyptian Film Radar</h1>
         {warning_html}
@@ -768,8 +783,10 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
           This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
           Sent by <a href="{PROJECT_URL}" style="color:#b0b8bf;">Egyptian Film Radar</a>.
         </p>
-      </div>
-    </body></html>"""
+      </div>"""
+    body = ('<html><head><meta charset="utf-8"></head>'
+            '<body style="font-family:Arial,sans-serif;color:#333;background:#f4f4f4;padding:20px;">'
+            f'{card}</body></html>')
 
     if theater_hits or streaming_hits:
         parts = []
@@ -784,7 +801,7 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
         subject += " (check needed)"
     if TEST_MODE:
         subject = "[TEST] " + subject
-    return subject, body
+    return subject, body, card
 
 
 def build_text(theater_hits, streaming_hits, watchlist):
@@ -830,17 +847,108 @@ def send_email(subject, body, text):
 
 
 # ---------------------------------------------------------------------------
+# Buttondown delivery
+# ---------------------------------------------------------------------------
+class Buttondown:
+    BASE = "https://api.buttondown.com/v1"
+
+    def __init__(self, api_key):
+        self.headers = {"Authorization": f"Token {api_key}", "User-Agent": HEADERS["User-Agent"]}
+
+    def request(self, method, path, extra_headers=None, **kwargs):
+        headers = dict(self.headers, **(extra_headers or {}))
+        res = requests.request(method, self.BASE + path, headers=headers, timeout=60, **kwargs)
+        if res.status_code >= 400:
+            raise RuntimeError(f"Buttondown {method} {path} failed: {res.status_code} {res.text[:300]}")
+        return res.json() if res.content else {}
+
+    @staticmethod
+    def as_html(card):
+        # Tell Buttondown this is HTML, not Markdown, so it keeps our layout.
+        return "<!-- buttondown-editor-mode: fancy -->" + card
+
+    def publish(self, subject, card):
+        """Send an issue to every subscriber and add it to the public archive."""
+        body = self.as_html(card)
+        # Same content on the same day = same key, so a retried request can't send twice.
+        key = "efr-" + today() + "-" + hashlib.sha256((subject + body).encode("utf-8")).hexdigest()[:32]
+        return self.request("POST", "/emails", extra_headers={"X-Idempotency-Key": key}, json={
+            "subject": subject,
+            "body": body,
+            "status": "about_to_send",
+            "slug": f"issue-{today()}",
+            "archival_mode": "enabled",
+            "commenting_mode": "disabled",
+        })
+
+    def send_private(self, subject, card, recipients):
+        """Send an email only to the given addresses (tests, alerts, notes).
+        It's created as a hidden draft, sent to those addresses, then deleted."""
+        draft = self.request("POST", "/emails", json={
+            "subject": subject,
+            "body": self.as_html(card),
+            "status": "draft",
+            "slug": f"note-{datetime.now():%Y%m%d-%H%M%S}",
+            "archival_mode": "disabled",
+            "commenting_mode": "disabled",
+        })
+        try:
+            self.request("POST", f"/emails/{draft['id']}/send-draft", json={"recipients": recipients})
+        finally:
+            try:
+                self.request("DELETE", f"/emails/{draft['id']}")
+            except Exception as e:
+                print(f"Note: couldn't delete the temporary draft in Buttondown: {hide_secrets(e)}")
+
+
+def deliver_buttondown(subject, card, theater_hits, streaming_hits, warnings, state):
+    """Returns True if state should be saved."""
+    bd = Buttondown(BUTTONDOWN_API_KEY)
+    admin = [a.strip() for a in ADMIN_EMAIL.split(",") if a.strip()]
+
+    if TEST_MODE:
+        bd.send_private(subject, card, admin)
+        print(f"TEST MODE: sent only to {ADMIN_EMAIL}: {subject}")
+        return False
+
+    if warnings:
+        # Never publish an issue that may be broken. Tell the admin instead;
+        # nothing is saved, so the next run tries again.
+        bd.send_private(subject.replace("(check needed)", "(NOT sent to subscribers)"), card, admin)
+        print(f"Problems found, so the issue was NOT published. Details sent to {ADMIN_EMAIL}.")
+        sys.exit(1)
+
+    if not (theater_hits or streaming_hits):
+        # Subscribers don't need a "nothing new" email; just let the admin know it ran.
+        bd.send_private(subject + " (only sent to you)", card, admin)
+        print(f"Nothing new, so nothing was published. A short note went to {ADMIN_EMAIL}.")
+        return True
+
+    bd.publish(subject, card)
+    print(f"Published to Buttondown subscribers: {subject}")
+    return True
+
+
+# ---------------------------------------------------------------------------
 def main():
     print(f"Starting Egyptian Film Radar {VERSION} ({today()})"
           + (" [TEST MODE]" if TEST_MODE else "") + (" [DRY RUN]" if DRY_RUN else ""))
 
-    if not DRY_RUN and not (EMAIL_ADDRESS and EMAIL_PASSWORD and TO_EMAIL):
-        print("ERROR: EMAIL_ADDRESS, EMAIL_PASSWORD or TO_EMAIL is missing. Check the .env file.")
+    if DELIVERY not in ("smtp", "buttondown"):
+        print(f"ERROR: DELIVERY={DELIVERY!r} in .env should be 'smtp' or 'buttondown'.")
         sys.exit(1)
+    if not DRY_RUN:
+        if DELIVERY == "smtp" and not (EMAIL_ADDRESS and EMAIL_PASSWORD and TO_EMAIL):
+            print("ERROR: EMAIL_ADDRESS, EMAIL_PASSWORD or TO_EMAIL is missing. Check the .env file.")
+            sys.exit(1)
+        if DELIVERY == "buttondown" and not (BUTTONDOWN_API_KEY and ADMIN_EMAIL):
+            print("ERROR: DELIVERY=buttondown needs BUTTONDOWN_API_KEY and ADMIN_EMAIL in the .env file.")
+            sys.exit(1)
 
     print(f"Settings: rating >= {MIN_RATING} with >= {MIN_VOTES} votes, re-check {RECHECK_WEEKS} weeks, "
           f"watch for streaming {STREAMING_WATCH_MONTHS} months, every {RUN_EVERY_DAYS} days, "
-          f"Arabic titles {'on' if SHOW_ARABIC_TITLES else 'off'}, TMDB key {'set' if TMDB_API_KEY else 'MISSING'}")
+          f"Arabic titles {'on' if SHOW_ARABIC_TITLES else 'off'}, TMDB key {'set' if TMDB_API_KEY else 'MISSING'}, "
+          f"delivery {DELIVERY}")
 
     state = load_state()
 
@@ -856,7 +964,7 @@ def main():
     yango_index = load_yango_index()
     tmdb = TMDB(TMDB_API_KEY)
     theater_hits, streaming_hits, warnings = run_checks(state, yango_index, tmdb)
-    subject, body = build_email(theater_hits, streaming_hits, warnings, state["watchlist"])
+    subject, body, card = build_email(theater_hits, streaming_hits, warnings, state["watchlist"])
     text = build_text(theater_hits, streaming_hits, state["watchlist"])
     size_kb = len(body.encode("utf-8")) / 1024
     if size_kb > 95:
@@ -871,17 +979,29 @@ def main():
         print(f"Preview saved to {PREVIEW_FILE}. Nothing was saved to state.json.")
         return
 
-    try:
-        send_email(subject, body, text)
-        print(f"Email sent: {subject}")
-    except Exception as e:
-        # Don't save, so nothing is marked as reported and next run tries again.
-        print(f"ERROR: email failed to send: {hide_secrets(e)}")
-        sys.exit(1)
-
-    if TEST_MODE:
-        print("TEST MODE: nothing was saved to state.json.")
-        return
+    if DELIVERY == "buttondown":
+        try:
+            should_save = deliver_buttondown(subject, card, theater_hits, streaming_hits, warnings, state)
+        except SystemExit:
+            raise
+        except Exception as e:
+            # Don't save, so nothing is marked as reported and next run tries again.
+            print(f"ERROR: Buttondown delivery failed: {hide_secrets(e)}")
+            sys.exit(1)
+        if not should_save:
+            print("TEST MODE: nothing was saved to state.json.")
+            return
+    else:
+        try:
+            send_email(subject, body, text)
+            print(f"Email sent: {subject}")
+        except Exception as e:
+            # Don't save, so nothing is marked as reported and next run tries again.
+            print(f"ERROR: email failed to send: {hide_secrets(e)}")
+            sys.exit(1)
+        if TEST_MODE:
+            print("TEST MODE: nothing was saved to state.json.")
+            return
 
     state["last_run"] = today()
     save_state(state)
