@@ -88,7 +88,7 @@ def env_number(name, default, kind=float):
         return default
 
 
-VERSION = "1.3.0"
+VERSION = "1.3.2"
 PROJECT_URL = "https://github.com/YoussefElnaka/egyptian-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
@@ -779,12 +779,15 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
 
     streaming_cards = ""
     for i, m in enumerate(streaming_hits):
+        # Each service button is its own table cell with a dark background, so the
+        # text sits centred in every email app. (No play-arrow symbol: Gmail swaps
+        # it for a big orange emoji that throws the button off-centre.)
         pills = "".join(
-            f'<td style="padding:0 6px 6px 0;">'
-            f'<a href="{e(p["url"] or m["link"])}" style="display:inline-block;background:{INK};'
-            f'border-radius:14px;padding:5px 12px;text-decoration:none;color:#ffffff;">'
-            f'<span style="color:#ffffff;font-size:12px;font-weight:700;font-family:{FONT};">'
-            f'&#9654;&nbsp;{e(name)}</span></a></td>'
+            f'<td style="padding:0 6px 6px 0;"><table cellpadding="0" cellspacing="0" border="0" '
+            f'role="presentation"><tr><td align="center" bgcolor="{INK}" style="background:{INK};'
+            f'border-radius:14px;padding:6px 14px;font-family:{FONT};font-size:12px;line-height:16px;">'
+            f'<a href="{e(p["url"] or m["link"])}" style="color:#ffffff;text-decoration:none;display:block;">'
+            f'<span style="color:#ffffff;font-weight:700;">{e(name)}</span></a></td></tr></table></td>'
             for name, p in m["platforms"].items()
         )
         where = " &middot; ".join(
@@ -843,11 +846,20 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
 <div style="font-size:11px;line-height:16px;color:{FAINT};">Ratings and cinema listings from ElCinema. Streaming availability from Yango Play, ElCinema and TMDB, with TMDB's streaming data provided by JustWatch.</div>
 <div style="font-size:11px;line-height:16px;color:{FAINT};">This product uses the TMDB API but is not endorsed or certified by TMDB.</div>
 <div style="font-size:11px;line-height:16px;color:{FAINT};">Sent by {link(PROJECT_URL, "Egyptian Film Radar", FAINT, "text-decoration:underline;")}</div>
+<!--UNSUBSCRIBE-->
 </td></tr>
 </table>
 </td></tr>
 </table>"""
 
+    # Buttondown version: add an unsubscribe link. {{ unsubscribe_url }} is filled
+    # in by Buttondown with each subscriber's personal link.
+    unsubscribe = (f'<div style="font-size:11px;line-height:16px;color:{FAINT};margin:6px 0 0 0;">'
+                   f'You\'re getting this because you subscribed. '
+                   f'<a href="{{{{ unsubscribe_url }}}}" style="color:{FAINT};text-decoration:underline;">'
+                   f'<span style="color:{FAINT};">Unsubscribe</span></a></div>')
+    bd_content = content.replace("<!--UNSUBSCRIBE-->", unsubscribe)
+    content = content.replace("<!--UNSUBSCRIBE-->", "")
     body = ('<!DOCTYPE html><html><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
             f'<body style="margin:0;padding:0;background:#f3f4f6;">{content}</body></html>')
@@ -862,7 +874,7 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
     # "[TEST]" label when sending through a normal email account.
     if TEST_MODE and DELIVERY != "buttondown":
         subject = "[TEST] " + subject
-    return subject, body, content
+    return subject, body, bd_content
 
 
 def build_text(theater_hits, streaming_hits, watchlist):
