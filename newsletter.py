@@ -1,7 +1,7 @@
 """
-Egypt Film Radar
-----------------
-https://github.com/YoussefElnaka/egypt-film-radar
+Egyptian Film Radar
+-------------------
+https://github.com/YoussefElnaka/egyptian-film-radar
 
 Sends an email every two weeks (by default) with two sections:
 
@@ -83,8 +83,8 @@ def env_number(name, default, kind=float):
         return default
 
 
-VERSION = "1.1.0"
-PROJECT_URL = "https://github.com/YoussefElnaka/egypt-film-radar"
+VERSION = "1.1.1"
+PROJECT_URL = "https://github.com/YoussefElnaka/egyptian-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
 SMTP_HOST = os.environ.get("SMTP_HOST", "").strip() or "smtp.gmail.com"
@@ -129,7 +129,7 @@ NOW_PLAYING_URLS = [
 WORK_URL = BASE + "/en/work/{id}/"
 ARABIC_WORK_URL = BASE + "/work/{id}/"
 # Identify ourselves honestly to the sites we read, with a link to this project.
-HEADERS = {"User-Agent": f"egypt-film-radar/{VERSION} (+{PROJECT_URL})"}
+HEADERS = {"User-Agent": f"egyptian-film-radar/{VERSION} (+{PROJECT_URL})"}
 
 YANGO_SITEMAP = "https://play.yango.com/sitemap.xml"
 TMDB_BASE = "https://api.themoviedb.org/3"
@@ -693,7 +693,7 @@ def rating_html(m):
     small = 'style="margin:4px 0 0 0;color:#7f8c8d;font-size:13px;"'
     date = f'<p {small}>Released {html.escape(m["release_date"])}</p>' if m.get("release_date") else ""
     if m.get("genres"):
-        date += f'<p {small}>{html.escape(" · ".join(m["genres"]))}</p>'
+        date += f'<p {small}>{" &middot; ".join(html.escape(g) for g in m["genres"])}</p>'
     if not m.get("votes"):
         return f'<p style="margin:8px 0 0 0;font-size:15px;color:#7f8c8d;">Not rated yet</p>{date}'
     return (f'<p style="margin:8px 0 0 0;font-size:15px;">'
@@ -751,9 +751,9 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
     )
 
     body = f"""
-    <html><body style="font-family:Arial,sans-serif;color:#333;background:#f4f4f4;padding:20px;">
+    <html><head><meta charset="utf-8"></head><body style="font-family:Arial,sans-serif;color:#333;background:#f4f4f4;padding:20px;">
       <div style="max-width:600px;margin:0 auto;background:#fff;padding:20px;border-radius:10px;">
-        <h1 style="text-align:center;color:#2c3e50;font-size:22px;margin:0 0 5px 0;">Egypt Film Radar</h1>
+        <h1 style="text-align:center;color:#2c3e50;font-size:22px;margin:0 0 5px 0;">Egyptian Film Radar</h1>
         {warning_html}
         {section("Performing well in theaters", "#e67e22", theater_cards,
                  f"No new Egyptian releases reached {MIN_RATING} this time.")}
@@ -766,7 +766,7 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
           Ratings and cinema listings from ElCinema. Streaming availability from Yango Play,
           ElCinema, and TMDB, with TMDB's streaming data provided by JustWatch.<br>
           This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
-          Sent by <a href="{PROJECT_URL}" style="color:#b0b8bf;">Egypt Film Radar</a>.
+          Sent by <a href="{PROJECT_URL}" style="color:#b0b8bf;">Egyptian Film Radar</a>.
         </p>
       </div>
     </body></html>"""
@@ -777,9 +777,9 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
             parts.append(f"{len(theater_hits)} in theaters")
         if streaming_hits:
             parts.append(f"{len(streaming_hits)} now streaming")
-        subject = "Egypt Film Radar: " + ", ".join(parts)
+        subject = "Egyptian Film Radar: " + ", ".join(parts)
     else:
-        subject = "Egypt Film Radar: nothing new"
+        subject = "Egyptian Film Radar: nothing new"
     if warnings:
         subject += " (check needed)"
     if TEST_MODE:
@@ -794,7 +794,7 @@ def build_text(theater_hits, streaming_hits, watchlist):
         rating = f"{m['rating']}/10 ({m['votes']:,} ratings)" if m.get("votes") else "not rated yet"
         date = f", released {m['release_date']}" if m.get("release_date") else ""
         return f"- {m['title']}: {rating}{date}\n  {m['link']}"
-    parts = ["EGYPT FILM RADAR", "",
+    parts = ["EGYPTIAN FILM RADAR", "",
              "PERFORMING WELL IN THEATERS"]
     parts += [line(m) for m in sorted(theater_hits, key=lambda m: m["rating"], reverse=True)] or ["Nothing new this time."]
     parts += ["", "NOW STREAMING"]
@@ -804,7 +804,7 @@ def build_text(theater_hits, streaming_hits, watchlist):
     if not streaming_hits:
         parts.append("Nothing new this time.")
     parts += ["", f"Monitoring {len(watchlist)} movie(s) for a streaming release.", "",
-              f"Sent by Egypt Film Radar: {PROJECT_URL}"]
+              f"Sent by Egyptian Film Radar: {PROJECT_URL}"]
     return "\n".join(parts)
 
 
@@ -831,7 +831,7 @@ def send_email(subject, body, text):
 
 # ---------------------------------------------------------------------------
 def main():
-    print(f"Starting Egypt Film Radar {VERSION} ({today()})"
+    print(f"Starting Egyptian Film Radar {VERSION} ({today()})"
           + (" [TEST MODE]" if TEST_MODE else "") + (" [DRY RUN]" if DRY_RUN else ""))
 
     if not DRY_RUN and not (EMAIL_ADDRESS and EMAIL_PASSWORD and TO_EMAIL):

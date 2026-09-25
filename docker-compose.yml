@@ -1,5 +1,5 @@
 services:
-  egypt-film-radar:
+  egyptian-film-radar:
     build: .
     env_file:
       - .env

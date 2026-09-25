@@ -1,8 +1,8 @@
-# Egypt Film Radar
+# Egyptian Film Radar
 
 Get an email when a new Egyptian movie is doing well in cinemas, and another when it starts streaming.
 
-Egypt Film Radar checks ElCinema every week for Egyptian movies in Egyptian cinemas, follows their ratings for their first few weeks, and emails you the ones that pass your bar. It then keeps watching those movies and tells you as soon as one shows up on a streaming service, anywhere in the world: Yango Play, Netflix, Shahid, OSN+, STARZPLAY, TOD, Prime Video and more.
+Egyptian Film Radar checks ElCinema every week for Egyptian movies in Egyptian cinemas, follows their ratings for their first few weeks, and emails you the ones that pass your bar. It then keeps watching those movies and tells you as soon as one shows up on a streaming service, anywhere in the world: Yango Play, Netflix, Shahid, OSN+, STARZPLAY, TOD, Prime Video and more.
 
 It runs on your own computer or NAS with Docker, and emails you every two weeks.
 
@@ -42,8 +42,8 @@ Every movie is reported once. You won't get the same movie twice in the same sec
 **1. Download the project.** Click the green **Code** button at the top of this page and choose **Download ZIP**, then unzip it where you want it to live. Or, with git:
 
 ```bash
-git clone https://github.com/YoussefElnaka/egypt-film-radar.git
-cd egypt-film-radar
+git clone https://github.com/YoussefElnaka/egyptian-film-radar.git
+cd egyptian-film-radar
 ```
 
 **2. Create your settings file.** Copy `.env.example` to a new file named `.env` in the same folder, and fill in at least `EMAIL_ADDRESS`, `EMAIL_PASSWORD`, `TO_EMAIL` and `TMDB_API_KEY`. Every setting is explained inside the file.
@@ -54,7 +54,7 @@ cd egypt-film-radar
 
 ```bash
 docker compose build
-docker compose run --rm -e DRY_RUN=1 egypt-film-radar
+docker compose run --rm -e DRY_RUN=1 egyptian-film-radar
 ```
 
 > The **first run takes 20–30 minutes**, because it reads about 1,000 Yango Play pages once to build its title list. It saves that list, so later runs take a few minutes.
@@ -62,13 +62,13 @@ docker compose run --rm -e DRY_RUN=1 egypt-film-radar
 **5. Send a test email.** Test mode sends the real email with `[TEST]` in the subject, but saves nothing, so you can run it as often as you like:
 
 ```bash
-docker compose run --rm -e TEST_MODE=1 egypt-film-radar
+docker compose run --rm -e TEST_MODE=1 egyptian-film-radar
 ```
 
 **6. Do the first real run:**
 
 ```bash
-docker compose run --rm egypt-film-radar
+docker compose run --rm egyptian-film-radar
 ```
 
 **7. Schedule it weekly.** Run it once a week. It keeps track of when it last sent an email and skips the weeks in between on its own (every 14 days by default). That way, if your machine happens to be off on newsletter day, the email just goes out the next week.
@@ -76,21 +76,21 @@ docker compose run --rm egypt-film-radar
 With cron on Linux or macOS (`crontab -e`), for every Monday at 9:00:
 
 ```cron
-0 9 * * 1 cd /path/to/egypt-film-radar && docker compose build -q && docker compose run --rm egypt-film-radar >> data/run.log 2>&1
+0 9 * * 1 cd /path/to/egyptian-film-radar && docker compose build -q && docker compose run --rm egyptian-film-radar >> data/run.log 2>&1
 ```
 
-Replace `/path/to/egypt-film-radar` with the real folder.
+Replace `/path/to/egyptian-film-radar` with the real folder.
 
 ### Synology NAS
 
-1. Put the project folder in your `docker` shared folder, for example `/volume1/docker/egypt-film-radar`, and create the `data` folder inside it with File Station.
+1. Put the project folder in your `docker` shared folder, for example `/volume1/docker/egyptian-film-radar`, and create the `data` folder inside it with File Station.
 2. Open **Control Panel → Task Scheduler → Create → Scheduled Task → User-defined script**.
-3. **General** tab: name it `Egypt Film Radar`, user `root`.
+3. **General** tab: name it `Egyptian Film Radar`, user `root`.
 4. **Schedule** tab: weekly, on the day and time you want.
 5. **Task Settings** tab, in the **Run command** box:
 
    ```bash
-   cd /volume1/docker/egypt-film-radar && docker-compose build && docker-compose run --rm egypt-film-radar
+   cd /volume1/docker/egyptian-film-radar && docker-compose build && docker-compose run --rm egyptian-film-radar
    ```
 
 6. To read the output of each run, open Task Scheduler's **Settings**, tick **Save output results**, and pick a folder. Then use **Action → View Result** on the task.
@@ -164,7 +164,7 @@ Put your `.env` file next to `newsletter.py`; the script reads it automatically.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-Egypt Film Radar is an independent project. It is not affiliated with or endorsed by ElCinema, Yango Play, TMDB, JustWatch, or any streaming service. It reads public pages politely, with pauses between requests and a user agent that links back to this project.
+Egyptian Film Radar is an independent project. It is not affiliated with or endorsed by ElCinema, Yango Play, TMDB, JustWatch, or any streaming service. It reads public pages politely, with pauses between requests and a user agent that links back to this project.
 
 ## License
 
