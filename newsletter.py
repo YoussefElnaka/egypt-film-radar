@@ -88,7 +88,7 @@ def env_number(name, default, kind=float):
         return default
 
 
-VERSION = "1.2.0"
+VERSION = "1.2.2"
 PROJECT_URL = "https://github.com/YoussefElnaka/egyptian-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
@@ -768,7 +768,7 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
 
     card = f"""
       <div style="max-width:600px;margin:0 auto;background:#fff;padding:20px;border-radius:10px;">
-        <h1 style="text-align:center;color:#2c3e50;font-size:22px;margin:0 0 5px 0;">Egyptian Film Radar</h1>
+        <!--HEADER-->
         {warning_html}
         {section("Performing well in theaters", "#e67e22", theater_cards,
                  f"No new Egyptian releases reached {MIN_RATING} this time.")}
@@ -784,6 +784,12 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
           Sent by <a href="{PROJECT_URL}" style="color:#b0b8bf;">Egyptian Film Radar</a>.
         </p>
       </div>"""
+    # Our own emails get a title at the top. Buttondown already shows the
+    # subject as a title, so its version (bd_card) leaves ours out.
+    header = ('<h1 style="text-align:center;color:#2c3e50;font-size:22px;margin:0 0 5px 0;">'
+              'Egyptian Film Radar</h1>')
+    bd_card = card.replace("<!--HEADER-->", "")
+    card = card.replace("<!--HEADER-->", header)
     body = ('<html><head><meta charset="utf-8"></head>'
             '<body style="font-family:Arial,sans-serif;color:#333;background:#f4f4f4;padding:20px;">'
             f'{card}</body></html>')
@@ -801,7 +807,7 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
         subject += " (check needed)"
     if TEST_MODE:
         subject = "[TEST] " + subject
-    return subject, body, card
+    return subject, body, bd_card
 
 
 def build_text(theater_hits, streaming_hits, watchlist):
@@ -864,8 +870,11 @@ class Buttondown:
 
     @staticmethod
     def as_html(card):
-        # Tell Buttondown this is HTML, not Markdown, so it keeps our layout.
-        return "<!-- buttondown-editor-mode: fancy -->" + card
+        # Tell Buttondown this is HTML, not Markdown. Also remove indentation:
+        # in Markdown, lines starting with 4+ spaces become a code block, which
+        # made the whole email show up as raw HTML code.
+        lines = [line.strip() for line in card.splitlines() if line.strip()]
+        return "<!-- buttondown-editor-mode: fancy -->\n" + "\n".join(lines)
 
     def publish(self, subject, card):
         """Send an issue to every subscriber and add it to the public archive."""
@@ -881,9 +890,23 @@ class Buttondown:
             "commenting_mode": "disabled",
         })
 
+    def cleanup_old_notes(self):
+        """Delete private notes from earlier runs. They're kept for a day
+        rather than deleted straight away, because Buttondown sends them in
+        the background and deleting too soon can cancel the send."""
+        try:
+            cutoff = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            data = self.request("GET", "/emails", params={"status": "draft", "creation_date__end": cutoff})
+            for email in data.get("results", []):
+                if (email.get("slug") or "").startswith("note-"):
+                    self.request("DELETE", f"/emails/{email['id']}")
+        except Exception as e:
+            print(f"Note: couldn't clean up old private notes in Buttondown: {hide_secrets(e)}")
+
     def send_private(self, subject, card, recipients):
         """Send an email only to the given addresses (tests, alerts, notes).
-        It's created as a hidden draft, sent to those addresses, then deleted."""
+        It's created as a hidden draft (never published) and sent to them."""
+        self.cleanup_old_notes()
         draft = self.request("POST", "/emails", json={
             "subject": subject,
             "body": self.as_html(card),
@@ -892,13 +915,7 @@ class Buttondown:
             "archival_mode": "disabled",
             "commenting_mode": "disabled",
         })
-        try:
-            self.request("POST", f"/emails/{draft['id']}/send-draft", json={"recipients": recipients})
-        finally:
-            try:
-                self.request("DELETE", f"/emails/{draft['id']}")
-            except Exception as e:
-                print(f"Note: couldn't delete the temporary draft in Buttondown: {hide_secrets(e)}")
+        self.request("POST", f"/emails/{draft['id']}/send-draft", json={"recipients": recipients})
 
 
 def deliver_buttondown(subject, card, theater_hits, streaming_hits, warnings, state):
