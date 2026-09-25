@@ -1,0 +1,8 @@
+services:
+  egypt-film-radar:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: "no"
