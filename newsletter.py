@@ -88,7 +88,7 @@ def env_number(name, default, kind=float):
         return default
 
 
-VERSION = "1.2.3"
+VERSION = "1.3.0"
 PROJECT_URL = "https://github.com/YoussefElnaka/egyptian-film-radar"
 
 EMAIL_ADDRESS = os.environ.get("EMAIL_ADDRESS")
@@ -670,137 +670,190 @@ def run_checks(state, yango_index, tmdb):
 # ---------------------------------------------------------------------------
 # The email
 # ---------------------------------------------------------------------------
-def movie_card(m, extra_html):
+# Design notes: everything uses inline styles on tables, <div>s and <td>s,
+# because email apps (and Buttondown) ignore or override most other styling.
+# Link text sits in its own <span> with an explicit colour, so no email app
+# can turn it blue.
+FONT = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+INK, MUTED, FAINT, LINE = "#111827", "#6b7280", "#9ca3af", "#e5e7eb"
+THEATER_COLOR, STREAM_COLOR, ALERT_COLOR = "#e8590c", "#2b8a3e", "#c92a2a"
+
+
+def link(url, text, color, extra_style=""):
     e = html.escape
-    title = e(m["title"] or "Untitled")
-    arabic = ""
-    # Only if it's actually in Arabic (some movies use their English name on the Arabic site too)
-    if SHOW_ARABIC_TITLES and m.get("arabic_title") and re.search(r"[\u0600-\u06FF]", m["arabic_title"]):
-        arabic = (f'<div dir="rtl" style="text-align:left;color:#7f8c8d;font-size:15px;margin-top:2px;">'
-                  f'{e(m["arabic_title"])}</div>')
-    poster = ""
-    if m.get("poster"):
-        poster = (
-            f'<td width="110" valign="top" style="padding-right:15px;">'
-            f'<a href="{e(m["link"])}"><img src="{e(m["poster"])}" alt="" width="100" '
-            f'style="border-radius:5px;display:block;max-width:100px;"></a></td>'
-        )
-    return f"""
-    <tr><td style="padding:12px 0;border-bottom:1px solid #eee;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-        {poster}
-        <td valign="top">
-          <a href="{e(m["link"])}" style="color:#2c3e50;text-decoration:none;font-size:18px;font-weight:bold;">{title}</a>
-          {arabic}
-          {extra_html}
-        </td>
-      </tr></table>
-    </td></tr>"""
-
-
-def section(heading, color, cards_html, empty_text):
-    body = cards_html or f'<tr><td style="color:#7f8c8d;padding:10px 0;">{empty_text}</td></tr>'
-    return f"""
-    <h2 style="color:{color};font-size:20px;margin:25px 0 5px 0;border-bottom:2px solid {color};padding-bottom:6px;">{heading}</h2>
-    <table width="100%" cellpadding="0" cellspacing="0" border="0">{body}</table>"""
+    return (f'<a href="{e(url)}" style="text-decoration:none;color:{color};{extra_style}">'
+            f'<span style="color:{color};">{text}</span></a>')
 
 
 def rating_html(m):
-    small = 'style="margin:4px 0 0 0;color:#7f8c8d;font-size:13px;"'
-    date = f'<p {small}>Released {html.escape(m["release_date"])}</p>' if m.get("release_date") else ""
-    if m.get("genres"):
-        date += f'<p {small}>{" &middot; ".join(html.escape(g) for g in m["genres"])}</p>'
-    if not m.get("votes"):
-        return f'<p style="margin:8px 0 0 0;font-size:15px;color:#7f8c8d;">Not rated yet</p>{date}'
-    return (f'<p style="margin:8px 0 0 0;font-size:15px;">'
-            f'<span style="font-size:18px;font-weight:bold;color:#e67e22;">{m["rating"]} / 10</span>'
-            f' <span style="color:#7f8c8d;font-size:13px;">from {m["votes"]:,} ratings</span></p>{date}')
+    """Rating badge plus a line with vote count, release date and genres."""
+    e = html.escape
+    details = []
+    if m.get("votes"):
+        badge = (f'<span style="display:inline-block;background:#fff4e6;color:{THEATER_COLOR};'
+                 f'font-weight:700;font-size:14px;padding:2px 8px;border-radius:10px;">'
+                 f'&#9733; {m["rating"]}</span>')
+        details.append(f'{m["votes"]:,} ratings')
+    else:
+        badge = (f'<span style="display:inline-block;background:#f3f4f6;color:{MUTED};'
+                 f'font-size:13px;padding:2px 8px;border-radius:10px;">Not rated yet</span>')
+    if m.get("release_date"):
+        details.append(f'Released {e(m["release_date"])}')
+    genres = " &middot; ".join(e(g) for g in m.get("genres") or [])
+    out = (f'<div style="margin:6px 0 0 0;font-size:13px;line-height:20px;color:{MUTED};">'
+           f'{badge}&nbsp; {" &middot; ".join(details)}</div>')
+    if genres:
+        out += f'<div style="margin:2px 0 0 0;font-size:13px;line-height:20px;color:{FAINT};">{genres}</div>'
+    return out
+
+
+def movie_card(m, extra_html, last=False):
+    e = html.escape
+    border = "" if last else f"border-bottom:1px solid {LINE};"
+    arabic = ""
+    # Only if it's actually in Arabic (some movies use their English name on the Arabic site too)
+    if SHOW_ARABIC_TITLES and m.get("arabic_title") and re.search(r"[\u0600-\u06FF]", m["arabic_title"]):
+        arabic = (f'<div dir="rtl" style="text-align:left;color:{MUTED};font-size:15px;line-height:22px;">'
+                  f'{e(m["arabic_title"])}</div>')
+    poster = ""
+    if m.get("poster"):
+        poster = (f'<td width="84" valign="top" style="padding:0 16px 0 0;width:84px;">'
+                  f'<a href="{e(m["link"])}"><img src="{e(m["poster"])}" alt="" width="84" '
+                  f'style="display:block;width:84px;max-width:84px;border-radius:6px;border:0;"></a></td>')
+    title = link(m["link"], e(m["title"] or "Untitled"), INK)
+    return f"""
+<tr><td style="padding:16px 0;{border}">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation"><tr>
+{poster}
+<td valign="top" style="font-family:{FONT};">
+<div style="font-size:17px;line-height:23px;font-weight:700;color:{INK};">{title}</div>
+{arabic}
+{extra_html}
+</td>
+</tr></table>
+</td></tr>"""
+
+
+def section(label, color, subtitle, cards_html, empty_text):
+    body = cards_html or (f'<tr><td style="padding:14px 0 4px 0;font-size:14px;color:{FAINT};'
+                          f'font-family:{FONT};">{empty_text}</td></tr>')
+    return f"""
+<tr><td style="padding:28px 0 0 0;font-family:{FONT};">
+<div style="font-size:12px;line-height:16px;font-weight:700;letter-spacing:1.5px;color:{color};">{label}</div>
+<div style="font-size:13px;line-height:18px;color:{FAINT};margin:2px 0 0 0;">{subtitle}</div>
+<div style="height:2px;background:{color};margin:8px 0 0 0;line-height:2px;font-size:0;">&nbsp;</div>
+</td></tr>
+<tr><td><table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation">{body}</table></td></tr>"""
 
 
 def monitoring_html(watchlist):
     items = sorted(watchlist.items(), key=lambda kv: kv[1].get("rating") or 0, reverse=True)
     if not items:
-        return '<p style="color:#95a5a6;font-size:13px;margin:6px 0;">Nothing being monitored right now.</p>'
+        return (f'<tr><td style="padding:8px 0;font-size:13px;color:{FAINT};font-family:{FONT};">'
+                f'Nothing being monitored right now.</td></tr>')
     rows = ""
     for work_id, i in items:
         details = []
         if i.get("rating"):
-            details.append(f'<span style="color:#e67e22;font-weight:bold;">{i["rating"]}</span>')
+            details.append(f'<span style="color:{THEATER_COLOR};font-weight:700;">{i["rating"]}</span>')
         if i.get("release_date"):
             details.append(html.escape(i["release_date"]))
         rows += (
-            f'<tr><td style="padding:4px 0;border-bottom:1px solid #f2f2f2;font-size:13px;color:#2c3e50;">'
-            f'&bull;&nbsp; <a href="{WORK_URL.format(id=work_id)}" style="color:#2c3e50;text-decoration:none;">'
-            f'{html.escape(i["title"])}</a></td>'
-            f'<td align="right" style="padding:4px 0;border-bottom:1px solid #f2f2f2;font-size:12px;'
-            f'color:#95a5a6;white-space:nowrap;">{" &middot; ".join(details)}</td></tr>'
+            f'<tr><td style="padding:7px 0;border-bottom:1px solid {LINE};font-size:14px;line-height:18px;'
+            f'font-family:{FONT};">{link(WORK_URL.format(id=work_id), html.escape(i["title"]), INK)}</td>'
+            f'<td align="right" style="padding:7px 0;border-bottom:1px solid {LINE};font-size:12px;'
+            f'line-height:18px;color:{FAINT};white-space:nowrap;font-family:{FONT};">'
+            f'{" &middot; ".join(details)}</td></tr>'
         )
-    return f'<table width="100%" cellpadding="0" cellspacing="0" border="0">{rows}</table>'
+    return rows
 
 
 def build_email(theater_hits, streaming_hits, warnings, watchlist):
+    e = html.escape
     by_rating = lambda m: m["rating"]
     theater_hits = sorted(theater_hits, key=by_rating, reverse=True)
     streaming_hits = sorted(streaming_hits, key=by_rating, reverse=True)
 
-    theater_cards = "".join(movie_card(m, rating_html(m)) for m in theater_hits)
+    theater_cards = "".join(movie_card(m, rating_html(m), last=(i == len(theater_hits) - 1))
+                            for i, m in enumerate(theater_hits))
 
     streaming_cards = ""
-    for m in streaming_hits:
-        buttons = "".join(
-            f'<a href="{html.escape(p["url"] or m["link"])}" style="display:inline-block;margin:8px 8px 0 0;'
-            f'padding:7px 12px;background:#27ae60;color:#fff;text-decoration:none;border-radius:5px;'
-            f'font-size:13px;font-weight:bold;">{html.escape(name)}</a>'
+    for i, m in enumerate(streaming_hits):
+        pills = "".join(
+            f'<td style="padding:0 6px 6px 0;">'
+            f'<a href="{e(p["url"] or m["link"])}" style="display:inline-block;background:{INK};'
+            f'border-radius:14px;padding:5px 12px;text-decoration:none;color:#ffffff;">'
+            f'<span style="color:#ffffff;font-size:12px;font-weight:700;font-family:{FONT};">'
+            f'&#9654;&nbsp;{e(name)}</span></a></td>'
             for name, p in m["platforms"].items()
         )
         where = " &middot; ".join(
-            f"{html.escape(name)}: {html.escape(p['where'])}"
-            for name, p in m["platforms"].items() if p.get("where")
+            f"{e(name)}: {e(p['where'])}" for name, p in m["platforms"].items() if p.get("where")
         )
-        where_html = f'<p style="margin:8px 0 0 0;color:#95a5a6;font-size:12px;">{where}</p>' if where else ""
-        streaming_cards += movie_card(m, f"{rating_html(m)}<div>{buttons}</div>{where_html}")
+        extra = (rating_html(m)
+                 + f'<table cellpadding="0" cellspacing="0" border="0" role="presentation" '
+                   f'style="margin:10px 0 0 0;"><tr>{pills}</tr></table>')
+        if where:
+            extra += f'<div style="font-size:12px;line-height:17px;color:{FAINT};margin:0;">{where}</div>'
+        streaming_cards += movie_card(m, extra, last=(i == len(streaming_hits) - 1))
 
     warning_html = "".join(
-        f'<p style="background:#fdecea;color:#c0392b;padding:10px;border-radius:5px;font-size:14px;">'
-        f"&#9888; {html.escape(w)}</p>"
+        f'<tr><td style="padding:16px 0 0 0;"><div style="background:#fff5f5;border:1px solid #ffc9c9;'
+        f'color:{ALERT_COLOR};padding:10px 12px;border-radius:6px;font-size:14px;line-height:20px;'
+        f'font-family:{FONT};">&#9888; {e(w)}</div></td></tr>'
         for w in warnings
     )
 
-    card = f"""
-      <div style="max-width:600px;margin:0 auto;background:#fff;padding:20px;border-radius:10px;">
-        <!--HEADER-->
-        {warning_html}
-        {section("Performing well in theaters", "#e67e22", theater_cards,
-                 f"No new Egyptian releases reached {MIN_RATING} this time.")}
-        {section("Now streaming", "#27ae60", streaming_cards,
-                 "None of your watchlist movies started streaming this time.")}
-        <h3 style="color:#7f8c8d;font-size:14px;margin:28px 0 4px 0;">
-          Monitoring for a streaming release ({len(watchlist)})</h3>
-        {monitoring_html(watchlist)}
-        <p style="text-align:center;color:#b0b8bf;font-size:11px;margin-top:18px;">
-          Ratings and cinema listings from ElCinema. Streaming availability from Yango Play,
-          ElCinema, and TMDB, with TMDB's streaming data provided by JustWatch.<br>
-          This product uses the TMDB API but is not endorsed or certified by TMDB.<br>
-          Sent by <a href="{PROJECT_URL}" style="color:#b0b8bf;">Egyptian Film Radar</a>.
-        </p>
-      </div>"""
-    # Our own emails get a title at the top. Buttondown already shows the
-    # subject as a title, so its version (bd_card) leaves ours out.
-    header = ('<h1 style="text-align:center;color:#2c3e50;font-size:22px;margin:0 0 5px 0;">'
-              'Egyptian Film Radar</h1>')
-    bd_card = card.replace("<!--HEADER-->", "")
-    card = card.replace("<!--HEADER-->", header)
-    body = ('<html><head><meta charset="utf-8"></head>'
-            '<body style="font-family:Arial,sans-serif;color:#333;background:#f4f4f4;padding:20px;">'
-            f'{card}</body></html>')
+    # Short summary for the inbox preview line
+    names = [m["title"] for m in theater_hits + streaming_hits if m.get("title")]
+    preheader = ", ".join(names[:4]) + ("..." if len(names) > 4 else "") if names else "Nothing new this time."
+    counts = []
+    if theater_hits:
+        counts.append(f"{len(theater_hits)} in theaters")
+    if streaming_hits:
+        counts.append(f"{len(streaming_hits)} now streaming")
+    summary = " &middot; ".join(counts) or "Nothing new this time"
+    today_str = short_date(datetime.now().strftime("%d %B %Y"))
+
+    header = f"""
+<tr><td style="background:{INK};border-radius:10px 10px 0 0;padding:22px 24px 18px 24px;font-family:{FONT};">
+<div style="font-size:12px;line-height:14px;letter-spacing:3px;font-weight:700;color:#f59f00;">EGYPTIAN</div>
+<div style="font-size:24px;line-height:30px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">Film Radar</div>
+<div style="font-size:13px;line-height:18px;color:{FAINT};margin:6px 0 0 0;">{today_str} &middot; {summary}</div>
+</td></tr>"""
+
+    content = f"""
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;line-height:1px;color:#ffffff;">{e(preheader)}</div>
+<table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation" style="background:#f3f4f6;">
+<tr><td align="center" style="padding:16px 8px;">
+<table width="600" cellpadding="0" cellspacing="0" border="0" role="presentation" style="width:600px;max-width:100%;">
+{header}
+<tr><td style="background:#ffffff;border-radius:0 0 10px 10px;padding:0 24px 24px 24px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation">
+{warning_html}
+{section("IN THEATERS", THEATER_COLOR, f"New Egyptian releases rated {MIN_RATING}+ on ElCinema",
+         theater_cards, f"No new Egyptian releases reached {MIN_RATING} this time.")}
+{section("NOW STREAMING", STREAM_COLOR, "Movies from earlier issues that just became available to stream",
+         streaming_cards, "None of the monitored movies started streaming this time.")}
+{section(f"MONITORING FOR A STREAMING RELEASE ({len(watchlist)})", MUTED,
+         "You'll get an email when these start streaming", monitoring_html(watchlist), "")}
+</table>
+</td></tr>
+<tr><td style="padding:16px 24px 0 24px;font-family:{FONT};font-size:11px;line-height:16px;color:{FAINT};text-align:center;">
+<div style="font-size:11px;line-height:16px;color:{FAINT};">Ratings and cinema listings from ElCinema. Streaming availability from Yango Play, ElCinema and TMDB, with TMDB's streaming data provided by JustWatch.</div>
+<div style="font-size:11px;line-height:16px;color:{FAINT};">This product uses the TMDB API but is not endorsed or certified by TMDB.</div>
+<div style="font-size:11px;line-height:16px;color:{FAINT};">Sent by {link(PROJECT_URL, "Egyptian Film Radar", FAINT, "text-decoration:underline;")}</div>
+</td></tr>
+</table>
+</td></tr>
+</table>"""
+
+    body = ('<!DOCTYPE html><html><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1"></head>'
+            f'<body style="margin:0;padding:0;background:#f3f4f6;">{content}</body></html>')
 
     if theater_hits or streaming_hits:
-        parts = []
-        if theater_hits:
-            parts.append(f"{len(theater_hits)} in theaters")
-        if streaming_hits:
-            parts.append(f"{len(streaming_hits)} now streaming")
-        subject = "Egyptian Film Radar: " + ", ".join(parts)
+        subject = "Egyptian Film Radar: " + ", ".join(counts)
     else:
         subject = "Egyptian Film Radar: nothing new"
     if warnings:
@@ -809,7 +862,7 @@ def build_email(theater_hits, streaming_hits, warnings, watchlist):
     # "[TEST]" label when sending through a normal email account.
     if TEST_MODE and DELIVERY != "buttondown":
         subject = "[TEST] " + subject
-    return subject, body, bd_card
+    return subject, body, content
 
 
 def build_text(theater_hits, streaming_hits, watchlist):
@@ -870,6 +923,19 @@ class Buttondown:
             raise RuntimeError(f"Buttondown {method} {path} failed: {res.status_code} {res.text[:300]}")
         return res.json() if res.content else {}
 
+    def create_email(self, payload, extra_headers=None):
+        """Create an email using the "naked" template, which drops Buttondown's
+        own title, byline and intro line so our design shows as-is. If the
+        account can't use that template, fall back to the default one."""
+        try:
+            return self.request("POST", "/emails", extra_headers=extra_headers,
+                                json=dict(payload, template="naked"))
+        except RuntimeError as e:
+            if "template" not in str(e).lower():
+                raise
+            print("Note: Buttondown didn't accept the 'naked' template, using the default one.")
+            return self.request("POST", "/emails", extra_headers=extra_headers, json=payload)
+
     @staticmethod
     def as_html(card):
         # Tell Buttondown this is HTML, not Markdown. Also remove indentation:
@@ -883,14 +949,14 @@ class Buttondown:
         body = self.as_html(card)
         # Same content on the same day = same key, so a retried request can't send twice.
         key = "efr-" + today() + "-" + hashlib.sha256((subject + body).encode("utf-8")).hexdigest()[:32]
-        return self.request("POST", "/emails", extra_headers={"X-Idempotency-Key": key}, json={
+        return self.create_email({
             "subject": subject,
             "body": body,
             "status": "about_to_send",
             "slug": f"issue-{today()}",
             "archival_mode": "enabled",
             "commenting_mode": "disabled",
-        })
+        }, extra_headers={"X-Idempotency-Key": key})
 
     def cleanup_old_notes(self):
         """Delete private notes from earlier runs. They're kept for a day
@@ -909,7 +975,7 @@ class Buttondown:
         """Send an email only to the given addresses (tests, alerts, notes).
         It's created as a hidden draft (never published) and sent to them."""
         self.cleanup_old_notes()
-        draft = self.request("POST", "/emails", json={
+        draft = self.create_email({
             "subject": subject,
             "body": self.as_html(card),
             "status": "draft",
